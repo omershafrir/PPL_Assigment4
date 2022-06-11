@@ -146,7 +146,7 @@ export const checkCoverType = (types: TExp[], p: Program): Result<TExp> => {
 
 // TODO: Define here auxiliary functions for TEnv computation
 
-// TODO L51
+// TOODO L51
 // Initialize TEnv with:
 // * Type of global variables (define expressions at top level of p)
 // * Type of implicitly defined procedures for user defined types (define-type expressions in p)
