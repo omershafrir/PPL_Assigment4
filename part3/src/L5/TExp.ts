@@ -50,7 +50,7 @@ import { isCompoundSexp, isToken, parse as p } from "../shared/parser";
 export type TExp =  AtomicTExp | CompoundTExp | TVar | UserDefinedNameTExp; // L51
 export const isTExp = (x: any): x is TExp => isAtomicTExp(x) || isCompoundTExp(x) || isTVar(x) || isUserDefinedNameTExp(x); // L51
 
-export type AtomicTExp = NumTExp | BoolTExp | StrTExp | VoidTExp | UserDefinedNameTExp | AnyTExp; // L51
+export type AtomicTExp = NumTExp | BoolTExp | StrTExp | SymbolTExp | PrimOpTExp | VoidTExp | UserDefinedNameTExp | AnyTExp; // L51
 export const isAtomicTExp = (x: any): x is AtomicTExp =>
     isNumTExp(x) || isBoolTExp(x) || isStrTExp(x) || isVoidTExp(x) || isUserDefinedNameTExp(x) || isAnyTExp(x); // L51
 
@@ -102,6 +102,14 @@ export const isBoolTExp = (x: any): x is BoolTExp => x.tag === "BoolTExp";
 export type StrTExp = { tag: "StrTExp" };
 export const makeStrTExp = (): StrTExp => ({tag: "StrTExp"});
 export const isStrTExp = (x: any): x is StrTExp => x.tag === "StrTExp";
+
+export type SymbolTExp = { tag: "SymbolTExp" };
+export const makeSymbolTExp = (): SymbolTExp => ({tag: "SymbolTExp"});
+export const isSymbolTExp = (x: any): x is SymbolTExp => x.tag === "SymbolTExp";
+
+export type PrimOpTExp = { tag: "PrimOpTExp" };
+export const makePrimOpTExp = (): PrimOpTExp => ({tag: "PrimOpTExp"});
+export const isPrimOpTExp = (x: any): x is PrimOpTExp => x.tag === "PrimOpTExp";
 
 export type VoidTExp = { tag: "VoidTExp" };
 export const makeVoidTExp = (): VoidTExp => ({tag: "VoidTExp"});
@@ -333,6 +341,8 @@ export const unparseTExp = (te: TExp): Result<string> => {
         isNumTExp(x) ? makeOk('number') :
         isBoolTExp(x) ? makeOk('boolean') :
         isStrTExp(x) ? makeOk('string') :
+        isSymbolTExp(x) ? makeOk('symbol'):
+        isPrimOpTExp(x) ? makeOk('primop'):
         isVoidTExp(x) ? makeOk('void') :
         isAnyTExp(x) ? makeOk('any') :
         isEmptyTVar(x) ? makeOk(x.var) :

@@ -25,34 +25,32 @@ export function makeTableService<T>(sync: (table?: Table<T>) => Promise<Table<T>
                 else{
                     reject(MISSING_KEY)
                 }
-            })).catch((err) => {return Promise.reject(err)});
+            }))//.catch((MISSING_TABLE_SERVICE) => MISSING_TABLE_SERVICE) 
 
             
         },
         set(key: string, val: T): Promise<void> {
-            return curr_table.then( (old_table) => {
+            return curr_table.then( (old_table) => new Promise<void>((resolve, reject) => {
                 const new_table: Record<string, Readonly<T>> = old_table;
-                // const new_table: {[key:string]:T} = {...old_table};
                 new_table[key] = val;
-                sync(new_table)
-                    .then(() => {return Promise.resolve()})
-                    .catch((err) => {return Promise.reject(err)});
-            }).catch((err) => {return Promise.reject(err)});
+                sync(new_table);
+                resolve();  
+                // reject(MISSING_KEY);
+            })
+            )//.catch((MISSING_TABLE_SERVICE) => MISSING_TABLE_SERVICE) 
             
         },
         delete(key: string): Promise<void> {
-            return curr_table.then((old_table) =>{
+            return curr_table.then((old_table) =>new Promise<void>((resolve, reject) => {
                 if (old_table[key] != undefined){
-                     const new_table: Record<string, Readonly<T>> = old_table;
-                    // const new_table: {[key:string]:T} = {...old_table};
+                    const new_table: Record<string, Readonly<T>> = old_table;
                     delete new_table[key];
-                    sync(new_table)
-                    .then(() => {return Promise.resolve()})
-                    .catch((err) => {return Promise.reject(err)});
+                    sync(new_table);
+                    resolve();
                 }
                 else
-                    return Promise.reject(MISSING_KEY)
-            }).catch((err) => {return Promise.reject(err)});
+                    reject(MISSING_KEY)
+            }))//.catch((MISSING_TABLE_SERVICE) => MISSING_TABLE_SERVICE) 
         }
     }
 }
@@ -199,36 +197,20 @@ export async function makeReactiveTableService<T>(sync: (table?: Table<T>) => Pr
     // optional initialization code
 
     let _table: Table<T> = await sync()
-    //type observersTable = Record<number, (table: Table<T>) => void  >;
-    //let observers: observersTable = {};
-    let observers:((table:Table<T>) => void)[]=[];
-    //let index = 0;
+    type observersTable = Record<number, (table: Table<T>) => void  >;
+    let observers: observersTable = {};
+    let index = 0;
 
     const handleMutation = async (newTable: Table<T>): Promise<void> => {
         // TODO implement!
-        // if (optimistic){                    //each observer gets a call immediately when a change is requested.
-        //     for (let i=0; i< index ; i++){  //if the mutation has failed, each observer should get a call with the previous table
-        //         observers[i](newTable);
-        //     }
+        if (optimistic){                    //each observer gets a call immediately when a change is requested.
+            for (let i=0; i< index ; i++){  //if the mutation has failed, each observer should get a call with the previous table
+                observers[i](newTable);
+            }
             
-        // }
-        // else{           //each observer gets a call only after the mutation has succeded
+        }
+        else{           //each observer gets a call only after the mutation has succeded
             
-        // }
-        try {
-            if (!optimistic)
-                updateObservers(newTable);
-            _table = await sync(newTable);
-          } catch (error) {
-            updateObservers(_table);
-            return Promise.reject(error);
-          }
-          return Promise.resolve();
-    }
-
-    const updateObservers = (table: Table<T>)=>{
-        for(var index in observers){
-            observers[index](table);
         }
     }
 
@@ -241,22 +223,15 @@ export async function makeReactiveTableService<T>(sync: (table?: Table<T>) => Pr
             }
         },
         set(key: string, val: T): Promise<void> {
-            // const new_table: Record<string, Readonly<T>> = _table;
-            const new_table: {[key:string]:T} = {..._table};
+            const new_table: Record<string, Readonly<T>> = _table;
             new_table[key] = val;
-            if (optimistic) {
-                updateObservers(new_table);
-            }
+            
             return handleMutation(new_table)
         },
         delete(key: string): Promise<void> {
             if (key in _table) {
-                // const new_table: Record<string, Readonly<T>> = _table;
-                const new_table: {[key:string]:T} = {..._table};
-                delete new_table[key]; 
-                if (optimistic) {
-                    updateObservers(new_table);
-                }   
+                const new_table: Record<string, Readonly<T>> = _table;
+                delete new_table[key];    
                 return handleMutation(new_table)
 
             } else {
@@ -266,7 +241,8 @@ export async function makeReactiveTableService<T>(sync: (table?: Table<T>) => Pr
         },
 
         subscribe(observer: (table: Table<T>) => void): void {
-            observers.push(observer);
+            observers[index] = observer;
+            index++;
         }
     }
 }

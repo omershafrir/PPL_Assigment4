@@ -8,13 +8,26 @@ import { isNumTExp, isProcTExp, makeBoolTExp, makeNumTExp, makeProcTExp, makeTVa
          isUserDefinedTExp, isUserDefinedNameTExp, makeAnyTExp, isAnyTExp, UserDefinedTExp, isTExp } from '../src/L5/TExp';
 import { makeOk, isOkT, bind, mapv, isFailure, Result } from '../src/shared/result';
 
+
+import  * as TEXP from "../src/L5/TExp";
+import  * as Typecheck from "../src/L5/L5-typecheck";
+
+
+
+
 describe('L5 Type Checker', () => {
+    
+    
     describe('parseTE', () => {
+
+
+
+
         it('parses atoms', () => {
             expect(parseTE("number")).toEqual(makeOk(makeNumTExp()));
             expect(parseTE("boolean")).toEqual(makeOk(makeBoolTExp()));
         });
-
+    
         it('parses type variables', () => {
             expect(parseTE("T1")).toEqual(makeOk(makeTVar("T1")));
         });
@@ -128,7 +141,8 @@ describe('L5 Type Checker', () => {
             expect(L51typeof("(quote ())")).toEqual(makeOk("literal"));
         });
 	});
-
+    
+    
     describe('Tools for analysis of UD Types', () => {
 		const p = `(L51
             (define-type Shape
@@ -299,8 +313,9 @@ describe('L5 Type Checker', () => {
                 expect(shapepred).toSatisfy(isOkT(isProcTExp));
 			});
 		});
+        
     });
-
+    
     describe('Type analysis of UD Types - Simple return type', () => {
         const tc1 = `
         (L51 
@@ -328,6 +343,7 @@ describe('L5 Type Checker', () => {
             })
         });
 	});
+    
 
     describe('Type analysis of UD Types - Record return type', () => {
         const circle = makeUserDefinedNameTExp('circle');
@@ -390,7 +406,7 @@ describe('L5 Type Checker', () => {
             })
         });
     });
-
+    
     describe('Type analysis of UD Types - UD return type', () => {
         const Shape = makeUserDefinedNameTExp('Shape');
         const circle = makeUserDefinedNameTExp('circle');
@@ -446,5 +462,5 @@ describe('L5 Type Checker', () => {
         });
 
 	});
-
+    
 });
