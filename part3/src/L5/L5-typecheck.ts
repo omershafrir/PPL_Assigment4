@@ -543,40 +543,47 @@ export const typeofLit = (exp: LitExp, _tenv: TEnv, _p: Program): Result<TExp> =
 //   ( type-case id val (record_1 (field_11 ... field_1r1) body_1)...  )
 //  TODO
 
-let parent = getUserDefinedTypeByName(exp.typeName,p)
-    if(isFailure(parent)){
-        let son = getRecordByName(exp.typeName,p)
-        if(isOk(son)){
-            parent = makeOk(getRecordParents(exp.typeName,p)[0])
-        }
-    }
-
-    let new_tc: TypeCaseExp = exp
-
-    if(isOk(parent)){
-    new_tc = makeTypeCaseExp( parent.value.typeName, exp.val , exp.cases)
-    }
 
 
-
-export const typeofTypeCase = (exp: TypeCaseExp, tenv: TEnv, p: Program): Result<TExp> => {
+    export const typeofTypeCase = (exp: TypeCaseExp, tenv: TEnv, p: Program): Result<TExp> => {
 
     
-    const constraint1:Result<true> = checkTypeCase(exp ,p );
-
-    const typeOfCorrectTypeCase: (exp: TypeCaseExp) => Result<TExp> = (exp: TypeCaseExp) => {
-        const cases:CaseExp[] = exp.cases;
-        const newEnv = makeExtendTEnv(getCaseVarNames(cases[0]),getCaseVarTypes(cases[0] , p),tenv)
-        const typeOfFirstCase = typeofExps(cases[0].body, newEnv ,p);
-        const constraint2 = cases.every( (cas:CaseExp) => {
-            const typeCurr = typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p)
-            return equals (typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p) , typeOfFirstCase )
-        } )
-        return constraint2 ? typeOfFirstCase : makeFailure("case types are not equal"); 
+        const constraint1:Result<true> = checkTypeCase(exp ,p );
+    
+        const typeOfCorrectTypeCase: (exp: TypeCaseExp) => Result<TExp> = (exp: TypeCaseExp) => {
+            const cases:CaseExp[] = exp.cases;
+            const newEnv = makeExtendTEnv(getCaseVarNames(cases[0]),getCaseVarTypes(cases[0] , p),tenv)
+            const typeOfFirstCase = typeofExps(cases[0].body, newEnv ,p);
+            const constraint2 = cases.every( (cas:CaseExp) => {
+                const typeCurr = typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p)
+                return equals (typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p) , typeOfFirstCase )
+            } )
+            return constraint2 ? typeOfFirstCase : makeFailure("case types are not equal"); 
+        }
+    
+        return bind (constraint1 , (constraint1Res:boolean) => typeOfCorrectTypeCase(exp))
     }
 
-    return bind (constraint1 , (constraint1Res:boolean) => typeOfCorrectTypeCase(exp))
-}
+
+
+// export const typeofTypeCase = (exp: TypeCaseExp, tenv: TEnv, p: Program): Result<TExp> => {
+
+    
+//     const constraint1:Result<true> = checkTypeCase(exp ,p );
+
+//     const typeOfCorrectTypeCase: (exp: TypeCaseExp) => Result<TExp> = (exp: TypeCaseExp) => {
+//         const cases:CaseExp[] = exp.cases;
+//         const newEnv = makeExtendTEnv(getCaseVarNames(cases[0]),getCaseVarTypes(cases[0] , p),tenv)
+//         const typeOfFirstCase = typeofExps(cases[0].body, newEnv ,p);
+//         const constraint2 = cases.every( (cas:CaseExp) => {
+//             const typeCurr = typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p)
+//             return equals (typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p) , typeOfFirstCase )
+//         } )
+//         return constraint2 ? typeOfFirstCase : makeFailure("case types are not equal"); 
+//     }
+
+//     return bind (constraint1 , (constraint1Res:boolean) => typeOfCorrectTypeCase(exp))
+// }
 
 const getCaseVarNames:(cas:CaseExp) => string[] = (cas:CaseExp) => map((vd: VarDecl) => vd.var ,  cas.varDecls); 
 
