@@ -1,19 +1,24 @@
 // L5-typecheck
 // ========================================================
-import { equals, filter, flatten, includes, map, intersection, zipWith, reduce } from 'ramda';
+import { equals, filter, flatten, includes, map, intersection, zipWith, reduce, sort } from 'ramda';
 import { isAppExp, isBoolExp, isDefineExp, isIfExp, isLetrecExp, isLetExp, isNumExp,
          isPrimOp, isProcExp, isProgram, isStrExp, isVarRef, unparse, parseL51,
          AppExp, BoolExp, DefineExp, Exp, IfExp, LetrecExp, LetExp, NumExp, SetExp, LitExp,
          Parsed, PrimOp, ProcExp, Program, StrExp, isSetExp, isLitExp, 
-         isDefineTypeExp, isTypeCaseExp, DefineTypeExp, TypeCaseExp, CaseExp } from "./L5-ast";
+         isDefineTypeExp, isTypeCaseExp, DefineTypeExp, TypeCaseExp, CaseExp, makeBoolExp, VarDecl, makeTypeCaseExp } from "./L5-ast";
 import { applyTEnv, makeEmptyTEnv, makeExtendTEnv, TEnv } from "./TEnv";
 import { isProcTExp, makeBoolTExp, makeNumTExp, makeProcTExp, makeStrTExp, makeVoidTExp,
          parseTE, unparseTExp, Record,
          BoolTExp, NumTExp, StrTExp, TExp, VoidTExp, UserDefinedTExp, isUserDefinedTExp, UDTExp, 
-         isNumTExp, isBoolTExp, isStrTExp, isVoidTExp,
-         isRecord, ProcTExp, makeUserDefinedNameTExp, Field, makeAnyTExp, isAnyTExp, isUserDefinedNameTExp } from "./TExp";
+         isNumTExp, isBoolTExp, isStrTExp, isVoidTExp, makeSymbolTExp , isSymbolTExp ,
+         isRecord, ProcTExp, makeUserDefinedNameTExp, Field, makeAnyTExp, isAnyTExp, isUserDefinedNameTExp, makePrimOpTExp, isTVar, isCompoundTExp } from "./TExp";
 import { isEmpty, allT, first, rest, cons } from '../shared/list';
-import { Result, makeFailure, bind, makeOk, zipWithResult, mapv, mapResult, isFailure, either } from '../shared/result';
+import { Result, makeFailure, bind, makeOk, zipWithResult, mapv, mapResult, isFailure, either, isOk } from '../shared/result';
+import { isClosure ,SExpValue , isSymbolSExp , isEmptySExp } from './L5-value';
+import * as Pred from '../shared/type-predicates';
+
+const util = require('util')
+
 
 // L51
 export const getTypeDefinitions = (p: Program): UserDefinedTExp[] => {
@@ -74,13 +79,21 @@ export const getTypeByName = (typeName: string, p: Program): Result<UDTExp> => {
     }
 }
 
-// TODO L51
+// TODO L51?
 // Is te1 a subtype of te2?
-const isSubType = (te1: TExp, te2: TExp, p: Program): boolean =>
-    false;
+const isSubType = (te1: TExp, te2: TExp, p: Program): boolean =>{
+    if (isAnyTExp(te2))
+        return true;
+    else if (isUserDefinedNameTExp(te1) && isUserDefinedNameTExp(te2)  || isUserDefinedNameTExp(te1) && isUserDefinedTExp(te2)){
+        const te2UDTexp: Result<UserDefinedTExp> = getUserDefinedTypeByName(te2.typeName , p);
+        if(isOk(te2UDTexp))
+            return isOk(te2UDTexp) ? (getRecordParents(te1.typeName , p).includes(te2UDTexp.value)) : false;
+        else return false;
+    }
+    else return false;}
 
 
-// TODO L51: Change this definition to account for user defined types
+// TODO L51?: Change this definition to account for user defined types
 // Purpose: Check that the computed type te1 can be accepted as an instance of te2
 // test that te1 is either the same as te2 or more specific
 // Deal with case of user defined type names 
@@ -88,6 +101,7 @@ const isSubType = (te1: TExp, te2: TExp, p: Program): boolean =>
 // p is passed to provide the context of all user defined types
 export const checkEqualType = (te1: TExp, te2: TExp, exp: Exp, p: Program): Result<TExp> =>
   equals(te1, te2) ? makeOk(te2) :
+  isSubType(te1 , te2 ,p) ? makeOk(te2):
   makeFailure(`Incompatible types: ${te1} and ${te2} in ${exp}`);
 
 
@@ -111,10 +125,11 @@ export const getParentsType = (te: TExp, p: Program): TExp[] =>
 
 // L51
 // Get the list of types that cover all ts in types.
-export const coverTypes = (types: TExp[], p: Program): TExp[] => 
+export const coverTypes = (types: TExp[], p: Program): TExp[] =>  {
     // [[p11, p12], [p21], [p31, p32]] --> types in intersection of all lists
-    ((parentsList: TExp[][]): TExp[] => reduce(intersection, first(parentsList), rest(parentsList)))
-     (map((t) => getParentsType(t,p), types));
+    const parentsList : TExp[][] = map((t) => getParentsType(t,p), types);
+    return reduce<TExp[], TExp[]>(intersection, first(parentsList), rest(parentsList));
+}
 
 // Return the most specific in a list of TExps
 // For example given UD(R1, R2):
@@ -150,23 +165,111 @@ export const checkCoverType = (types: TExp[], p: Program): Result<TExp> => {
 // Initialize TEnv with:
 // * Type of global variables (define expressions at top level of p)
 // * Type of implicitly defined procedures for user defined types (define-type expressions in p)
-export const initTEnv = (p: Program): TEnv =>
-    makeEmptyTEnv();
+export const initTEnv = (p: Program): TEnv =>{
+    const typeDef: UserDefinedTExp[] = getTypeDefinitions(p)
+    const records: Record[] = getRecords(p)
+    const initialEnv:TEnv = makeEmptyTEnv();
+    const  definitions: DefineExp[] = getDefinitions(p);
 
+    const definitionsNames:string[] = map( (def:DefineExp) => def.var.var , definitions);
+    const definitionsType: TExp[] = map((def:DefineExp) => def.var.texp , definitions);
+
+    const UDPredicatesNames:string[] = map((UD: UserDefinedTExp) => `${UD.typeName}?` , typeDef);
+    const UDPredicates:ProcTExp[] = map(  (UD: UserDefinedTExp) => typePredGen() , typeDef);
+
+    const recordsPredicatesNames:string[] = map(  (rec: Record) => `${rec.typeName}?` , records);
+    const recordsPredicates:ProcTExp[] = map(  (rec: Record) => typePredGen() , records);
+
+    const recordsConstructorsNames:string[] = map(  (rec: Record) => `make-${rec.typeName}` , records);
+    const recordsConstructors:ProcTExp[] = map(  (rec: Record) => recordsConstructorGen(rec , p) , records);
+    
+    const functionsNames:string[] = [...UDPredicatesNames , ...recordsPredicatesNames , ...recordsConstructorsNames , ...definitionsNames];
+    const functions:TExp[] = [...UDPredicates , ...recordsPredicates , ...recordsConstructors , ...definitionsType];
+
+    return makeExtendTEnv(functionsNames , functions , initialEnv);
+
+}
+const recordsConstructorGen = (rec: Record , p:Program): ProcTExp =>{
+    const type:Result<UDTExp>  = getTypeByName(rec.typeName ,p);
+    const fieldsType:TExp[] = map((field:Field) => field.te , rec.fields);
+    if (isOk(type))
+       return makeProcTExp( fieldsType  , makeUserDefinedNameTExp(type.value.typeName) )    // return makeProcTExp( fieldsType  , type.value)
+    else
+        return makeProcTExp( fieldsType , makeAnyTExp() );
+} 
+const typePredGen = (): ProcTExp => makeProcTExp( [makeAnyTExp()]  , makeBoolTExp());
+   
+export const getAllRecordsByName: ((rec:Record , records:Record[])=> Record[]) = (rec:Record, records:Record[]) => filter ((currRec:Record) => currRec.typeName ===  rec.typeName  , records);
+export const hasSameFields: ((records:Record[], first:Record) => boolean) = (records:Record[] , first:Record) => reduce((acc , curr)=> (acc && equals(curr.fields ,first.fields)),true,records);
+export const isRecursive: (UDtype:UserDefinedTExp) => boolean = (UDtype:UserDefinedTExp) => UDtype.records.some((rec:Record) => rec.fields.some((field:Field) => equals(field.te , makeUserDefinedNameTExp(UDtype.typeName)) ))   
+export const hasBaseCase: (UDtype:UserDefinedTExp) => boolean = (UDtype:UserDefinedTExp) => UDtype.records.some((rec:Record) => rec.fields.every((field:Field) => !equals(field.te , makeUserDefinedNameTExp(UDtype.typeName)) ))   
+export const isGoodUDType: (UDtype:UserDefinedTExp) => boolean = (UDtype:UserDefinedTExp) => !isRecursive(UDtype) || (isRecursive(UDtype) && hasBaseCase(UDtype));
 
 // Verify that user defined types and type-case expressions are semantically correct
 // =================================================================================
 // TODO L51
-const checkUserDefinedTypes = (p: Program): Result<true> =>
+export const checkUserDefinedTypes = (p: Program): Result<true> =>{
     // If the same type name is defined twice with different definitions
     // If a recursive type has no base case
-    makeOk(true);
+    const UDtypes:UserDefinedTExp[] = getTypeDefinitions(p);
+    const records:Record[] = getRecords(p);
+        //condition 1
+    const constraint1: boolean = reduce (  (acc:boolean ,curr:Record) => curr && hasSameFields( getAllRecordsByName(curr , records) , curr)  , true , records)
 
-// TODO L51
-const checkTypeCase = (tc: TypeCaseExp, p: Program): Result<true> => 
+        //condition 2
+    const constraint2: boolean = reduce ( (acc: boolean, curr: UserDefinedTExp) =>  acc && isGoodUDType(curr) , true ,UDtypes);
+    
+    return (constraint1 && constraint2) ?makeOk(true) : makeFailure("one of the constraints is false");
+}
+
+
+// TODO L51?
+export const checkTypeCase = (tc: TypeCaseExp, p: Program): Result<true> => {
     // Check that all type case expressions have exactly one clause for each constituent subtype 
     // (in any order)
-    makeOk(true);
+    const cases:CaseExp[] = tc.cases;
+    // // let new_tc = tc;
+
+    
+    // // const casesTypesNames:string[] = map( (cas:CaseExp) => cas.typeName , cases);
+    // // const casesTypes:Result<TExp>[] = map((name:string )=> getTypeByName(name,p) ,casesTypesNames);
+    // // const casesTypesRes : TExp[] = map((te:Result<TExp>) => isOk(te)? te.value : makeVoidTExp() , casesTypes);
+    
+
+
+    // if(isOk(getRecordByName(tc.typeName , p))){                 //typecase on a record!
+    // const casesTypesNames:string[] = map( (cas:CaseExp) => cas.typeName , cases);
+    // const casesTypes:Result<TExp>[] = map((name:string )=> getTypeByName(name,p) ,casesTypesNames);
+    // const casesTypesRes : TExp[] = map((te:Result<TExp>) => isOk(te)? te.value : makeVoidTExp() , casesTypes);
+    // const blabla = checkCoverType(casesTypesRes,p) 
+    // if (isOk(blabla) )
+    //    checkTypeCase(makeTypeCaseExp(blabla.value. , tc.val , tc.cases) , p);
+    // }
+
+    const userDefine: Result<UserDefinedTExp> = getUserDefinedTypeByName(tc.typeName , p);
+    const records: Result<Record[]> = mapv (userDefine , (userDefine) => userDefine.records);
+
+    const recordsNames: Result<string[]> = mapv(records , map( (rec:Record) => rec.typeName)  )
+    const casesNames: string[] = map( (Case:CaseExp) => Case.typeName ,tc.cases)
+        
+        //condition 1
+    const constraint1: Result<boolean> = mapv (recordsNames , (records:string[]) => equals(records.sort() , casesNames.sort()))
+
+        //condition 2
+    const constraint2: Result<boolean> = mapv (constraint1 , () => { 
+            const getVarsLength = (cas: CaseExp) => cas.varDecls.length;
+            const getFieldsLength = (cas:CaseExp)=> {
+                const numRes = mapv(getRecordByName(cas.typeName,p), (record:Record)=> record.fields.length)
+                return isFailure(numRes) ? -1 : numRes.value;
+            }
+            return reduce(  (acc, curr) => (acc && (getVarsLength(curr) === getFieldsLength(curr))) ,  true , cases)
+
+    }  )
+    return isOk(constraint2)? makeOk(true): makeFailure(constraint2.message);
+
+}
+
+
 
 
 // Compute the type of L5 AST exps to TE
@@ -251,7 +354,7 @@ export const typeofPrim = (p: PrimOp): Result<TExp> =>
     (p.op === 'newline') ? parseTE('(Empty -> void)') :
     makeFailure(`Primitive not yet implemented: ${p.op}`);
 
-// TODO L51
+// TODO L51?
 // Change this definition to account for possibility of subtype expressions between thenTE and altTE
 // 
 // Purpose: compute the type of an if-exp
@@ -264,11 +367,18 @@ export const typeofIf = (ifExp: IfExp, tenv: TEnv, p: Program): Result<TExp> => 
     const testTE = typeofExp(ifExp.test, tenv, p);
     const thenTE = typeofExp(ifExp.then, tenv, p);
     const altTE = typeofExp(ifExp.alt, tenv, p);
-    const constraint1 = bind(testTE, testTE => checkEqualType(testTE, makeBoolTExp(), ifExp, p));
-    const constraint2 = bind(thenTE, (thenTE: TExp) =>
+    const constraint1 = bind(testTE, testTE => checkEqualType(testTE, makeBoolTExp(), ifExp, p));   //check if test is boolean predicate
+    const constraint2 = bind(thenTE, (thenTE: TExp) =>                                              //check if then is subtype of alt
                             bind(altTE, (altTE: TExp) =>
-                                checkEqualType(thenTE, altTE, ifExp, p)));
-    return bind(constraint1, (_c1) => constraint2);
+                                checkEqualType(thenTE, altTE, ifExp, p)));       
+    const constraint3 = bind(altTE, (altTE: TExp) =>                                                ////check if alt is subtype of then
+                            bind(thenTE, (thenTE: TExp) =>
+                                checkEqualType(altTE, thenTE, ifExp, p)));    
+                                                                                
+    if(isOk(constraint2))
+        return bind(constraint1, (_c1) => constraint2);
+    else
+        return bind(constraint1, (_c1) => constraint3);
 };
 
 // Purpose: compute the type of a proc-exp
@@ -319,7 +429,7 @@ export const typeofLet = (exp: LetExp, tenv: TEnv, p: Program): Result<TExp> => 
     const vals = map((b) => b.val, exp.bindings);
     const varTEs = map((b) => b.var.texp, exp.bindings);
     const constraints = zipWithResult((varTE, val) => bind(typeofExp(val, tenv, p), (typeOfVal: TExp) => 
-                                                            checkEqualType(varTE, typeOfVal, exp, p)),
+                                                            checkEqualType(typeOfVal ,varTE, exp, p)),
                                       varTEs, vals);
     return bind(constraints, _ => typeofExps(exp.body, makeExtendTEnv(vars, varTEs, tenv), p));
 };
@@ -353,7 +463,7 @@ export const typeofLetrec = (exp: LetrecExp, tenv: TEnv, p: Program): Result<TEx
     return bind(constraints, _ => typeofExps(exp.body, tenvBody, p));
 };
 
-// TODO - write the true definition
+// TODO - write the true definition    ??????????????????????????????????????????????? 
 // Purpose: compute the type of a define
 // Typing rule:
 //   (define (var : texp) val)
@@ -361,11 +471,11 @@ export const typeofLetrec = (exp: LetrecExp, tenv: TEnv, p: Program): Result<TEx
 // If   type<val>(tenv-val) = texp
 // then type<(define (var : texp) val)>(tenv) = void
 export const typeofDefine = (exp: DefineExp, tenv: TEnv, p: Program): Result<VoidTExp> => {
-    const v = exp.var.var;
-    const texp = exp.var.texp;
+    // const v = exp.var.var;
+    // const texp = exp.var.texp;
     const val = exp.val;
-    const tenvVal = makeExtendTEnv([v], [texp], tenv);
-    const constraint = typeofExp(val, tenvVal, p);    
+    // const tenvVal = makeExtendTEnv([v], [texp], tenv);
+    const constraint = typeofExp(val, tenv, p);    
     return mapv(constraint, (_) => makeVoidTExp());
 };
 
@@ -374,10 +484,25 @@ export const typeofDefine = (exp: DefineExp, tenv: TEnv, p: Program): Result<Voi
 export const typeofProgram = (exp: Program, tenv: TEnv, p: Program): Result<TExp> =>
     typeofExps(exp.exps, tenv, p);
 
-// TODO L51
+// TODO L51         ??????????????????????????????????????????????
 // Write the typing rule for DefineType expressions
-export const typeofDefineType = (exp: DefineTypeExp, _tenv: TEnv, _p: Program): Result<TExp> =>
-    makeFailure(`Todo ${JSON.stringify(exp, null, 2)}`);
+export const typeofDefineType = (exp: DefineTypeExp, _tenv: TEnv, _p: Program): Result<TExp> =>{
+    // const v = exp.var.var;
+    // const texp = exp.var.texp;
+    // const val = exp.val;
+    // const tenvVal = makeExtendTEnv([v], [texp], tenv);
+    // const constraint = typeofExp(val, tenvVal, p);    
+    // return mapv(constraint, (_) => makeVoidTExp());
+
+    const udType:UserDefinedTExp = exp.udType;
+    const records: Record[] = udType.records;
+    const recordsNames: string[] = map ((rec:Record) => rec.typeName , records);
+    const newEnv = makeExtendTEnv(recordsNames , records , _tenv);
+
+    // const constraint1 = 
+    return makeOk(makeVoidTExp());
+
+}
 
 // TODO L51?
 export const typeofSet = (exp: SetExp, _tenv: TEnv, _p: Program): Result<TExp> =>{
@@ -390,9 +515,22 @@ export const typeofSet = (exp: SetExp, _tenv: TEnv, _p: Program): Result<TExp> =
 }
 
 
-// TODO L51
-export const typeofLit = (exp: LitExp, _tenv: TEnv, _p: Program): Result<TExp> =>
-    makeFailure(`Todo ${JSON.stringify(exp, null, 2)}`);
+// TODO L51?    
+// ADD support to TExp.ts: AtomicTExp disjoint union? L51?
+
+export const typeofLit = (exp: LitExp, _tenv: TEnv, _p: Program): Result<TExp> =>{
+    const val:SExpValue = exp.val;
+    return Pred.isNumber(val) ?  makeOk(makeNumTExp()) :
+    Pred.isBoolean(val) ? makeOk(makeBoolTExp()) :
+    Pred.isString(val) ? makeOk(makeStrTExp()) :
+    // isClosure(val) ? makeOk(/**makeClosureTexp() */) :
+    isPrimOp(val) ? makeOk(makePrimOpTExp()) :
+    isSymbolSExp(val) ? makeOk(makeSymbolTExp()) :
+    // isEmptySExp(val) ? makeOk("NONE") :
+    // isCompoundSExp(val) ? makeOk(/**makeCompundTexp() */) :
+    makeOk(makeVoidTExp());
+}
+    
 
 // TODO: L51
 // Purpose: compute the type of a type-case
@@ -404,6 +542,45 @@ export const typeofLit = (exp: LitExp, _tenv: TEnv, _p: Program): Result<TExp> =
 //         body_i for i in [1..n] sequences of CExp
 //   ( type-case id val (record_1 (field_11 ... field_1r1) body_1)...  )
 //  TODO
+
+let parent = getUserDefinedTypeByName(exp.typeName,p)
+    if(isFailure(parent)){
+        let son = getRecordByName(exp.typeName,p)
+        if(isOk(son)){
+            parent = makeOk(getRecordParents(exp.typeName,p)[0])
+        }
+    }
+
+    let new_tc: TypeCaseExp = exp
+
+    if(isOk(parent)){
+    new_tc = makeTypeCaseExp( parent.value.typeName, exp.val , exp.cases)
+    }
+
+
+
 export const typeofTypeCase = (exp: TypeCaseExp, tenv: TEnv, p: Program): Result<TExp> => {
-    return makeFailure(`TODO: typecase ${JSON.stringify(exp, null, 2)}`);
+
+    
+    const constraint1:Result<true> = checkTypeCase(exp ,p );
+
+    const typeOfCorrectTypeCase: (exp: TypeCaseExp) => Result<TExp> = (exp: TypeCaseExp) => {
+        const cases:CaseExp[] = exp.cases;
+        const newEnv = makeExtendTEnv(getCaseVarNames(cases[0]),getCaseVarTypes(cases[0] , p),tenv)
+        const typeOfFirstCase = typeofExps(cases[0].body, newEnv ,p);
+        const constraint2 = cases.every( (cas:CaseExp) => {
+            const typeCurr = typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p)
+            return equals (typeofExps(cas.body,makeExtendTEnv(getCaseVarNames(cas),getCaseVarTypes(cas , p),tenv),p) , typeOfFirstCase )
+        } )
+        return constraint2 ? typeOfFirstCase : makeFailure("case types are not equal"); 
+    }
+
+    return bind (constraint1 , (constraint1Res:boolean) => typeOfCorrectTypeCase(exp))
+}
+
+const getCaseVarNames:(cas:CaseExp) => string[] = (cas:CaseExp) => map((vd: VarDecl) => vd.var ,  cas.varDecls); 
+
+const getCaseVarTypes:(cas:CaseExp , p:Program) => TExp[] = (cas:CaseExp ,  p:Program) =>   {
+    const rec:Result<Record> = getRecordByName(cas.typeName , p);
+    return isOk(rec) ? map ((fi:Field) => fi.te , rec.value.fields) : [];
 }
